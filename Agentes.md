@@ -7,7 +7,7 @@
 - **Storage Legado:** `files.hpinfo.com.br` (Cloudflare R2 + Workers).
 
 ## 2. Stack Tecnológica (Expandida)
-- **Frontend:** Next.js (App Router) na Vercel.
+- **Frontend:** Next.js 16 (App Router) na Vercel.
 - **Backend:** Vercel Serverless Functions.
 - **Auth:** Clerk (Login Social/GitHub) - *Essencial para preferências/histórico.*
 - **Database/Cache:** Upstash Redis (Rate limiting e memória curta - Free Tier).
@@ -17,7 +17,7 @@
 ## 3. Matriz de Inteligência (Router Híbrido)
 | Modelo | Provedor | Função |
 | :--- | :--- | :--- |
-| **Llama 3 / Mixtral** | **Groq** | Chat rápido, Agentes Simples, Router. |
+| **Llama 3.3 70B** | **Groq** | Chat rápido, Agentes Simples, Router. |
 | **DeepSeek V3/R1** | **DeepSeek** | Lógica complexa, Coding, Raciocínio (ReAct). |
 | **Gemini 1.5 Pro** | **Google** | Visão (Prints/Vídeo), Contexto Gigante (Docs). |
 | **Whisper V3** | **Groq** | Transcrição de Áudio (STT). |
@@ -27,15 +27,16 @@
 ## 4. Plano de Execução (Roadmap Rigoroso)
 A IA deve respeitar a ordem para garantir estabilidade.
 
-### FASE 1: Fundação & Auth (O Core)
-- [ ] Setup Next.js + Vercel.
-- [ ] Implementar **Clerk Auth** (Login cria o contexto do usuário).
-- [ ] Chat Básico (Texto -> Groq -> Texto).
+### FASE 1: Fundação & Auth (O Core) ✅ COMPLETA
+- [x] Setup Next.js + Vercel.
+- [x] Implementar **Clerk Auth** (Login cria o contexto do usuário).
+- [x] Chat Básico (Texto -> Groq -> Texto) com streaming.
 - [ ] Configurar Logs básicos salvando no `files.hpinfo.com.br`.
 
-### FASE 2: Cérebro & Memória (A "Super IDE")
+### FASE 2: Cérebro & Memória (A "Super IDE") 🟡 EM PROGRESSO
 - [ ] Integrar DeepSeek para perguntas de código complexas.
-- [ ] Sistema de Histórico (Salvar chats no R2 por User ID do Clerk).
+- [x] Sistema de Histórico (Salvar chats no Redis por User ID do Clerk).
+- [x] API `/api/history` para carregar histórico ao iniciar.
 - [ ] RAG Simples: Upload de PDF -> Extrair Texto -> Buscar respostas (Contexto Pessoal).
 
 ### FASE 3: Multimodalidade (Olhos e Ouvidos)
@@ -52,8 +53,24 @@ A IA deve respeitar a ordem para garantir estabilidade.
 - [ ] Agentes Autônomos: Loops de "Pensar -> Agir -> Observar".
 - [ ] Análise de Sentimento: Detectar humor no chat e adaptar respostas.
 
-### 5. DevOps & Qualidade (Transversal)
+## 5. DevOps & Qualidade (Transversal)
 *Aplicar em todas as fases:*
 - **CI/CD:** GitHub Actions rodando testes básicos antes do deploy.
 - **Segurança:** Chaves sempre no `.env`. Rate Limiting com Redis.
 - **Custos:** Dashboard simples para monitorar uso de tokens Groq/DeepSeek.
+
+---
+
+## 📝 Notas Técnicas (2026-02-01)
+
+### Decisões de Implementação
+- **AI SDK 6.x não é compatível com Groq** - Usa endpoint `/responses` que Groq não suporta.
+- **Solução**: Chamada direta à API Groq via `fetch` em `/api/chat/route.ts`.
+- **Modelo atualizado**: `llama-3.1-70b-versatile` foi descontinuado → usando `llama-3.3-70b-versatile`.
+- **Persistência**: Histórico salvo no Redis com expiração de 24h.
+
+### Arquivos Principais
+- `src/app/(dashboard)/chat/page.tsx` - Interface do chat
+- `src/app/api/chat/route.ts` - API de chat (Groq direto)
+- `src/app/api/history/route.ts` - API de histórico (Redis)
+- `src/middleware.ts` - Proteção de rotas (Clerk)
