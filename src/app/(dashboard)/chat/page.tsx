@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef } from "react";
 import dynamic from "next/dynamic";
+import { Trash2, PlusCircle, Send, Sparkles } from "lucide-react";
 
 // Carrega o UserButton apenas no cliente para evitar hydration mismatch
 const UserButton = dynamic(
@@ -30,7 +31,6 @@ export default function ChatPage() {
                 if (response.ok) {
                     const history = await response.json();
                     if (Array.isArray(history) && history.length > 0) {
-                        // Adiciona IDs se não existirem
                         const messagesWithIds = history.map((msg: { role: string; content: string }, index: number) => ({
                             id: `history-${index}`,
                             role: msg.role as "user" | "assistant",
@@ -79,11 +79,8 @@ export default function ChatPage() {
                 }),
             });
 
-            if (!response.ok) {
-                throw new Error("Erro na API");
-            }
+            if (!response.ok) throw new Error("Erro na API");
 
-            // Streaming da resposta
             const reader = response.body?.getReader();
             const decoder = new TextDecoder();
 
@@ -109,10 +106,7 @@ export default function ChatPage() {
                         const updated = prev.slice(0, -1);
                         return [
                             ...updated,
-                            {
-                                ...assistantMessage,
-                                content: fullContent,
-                            },
+                            { ...assistantMessage, content: fullContent },
                         ];
                     });
                 }
@@ -132,61 +126,101 @@ export default function ChatPage() {
         }
     };
 
-    // Limpar histórico
-    const handleClearHistory = () => {
+    // Nova Conversa (Limpa apenas o estado local)
+    const handleNewChat = () => {
         setMessages([]);
     };
 
+    // Limpar Histórico (Deleta do Redis e do estado local)
+    const handleClearHistory = async () => {
+        if (!confirm("Tem certeza que deseja apagar todo o histórico permanentemente?")) return;
+
+        try {
+            const response = await fetch('/api/history', { method: 'DELETE' });
+            if (response.ok) {
+                setMessages([]);
+            } else {
+                alert("Erro ao limpar histórico no servidor.");
+            }
+        } catch (error) {
+            console.error("Erro ao limpar histórico:", error);
+            alert("Erro de conexão ao limpar histórico.");
+        }
+    };
+
     return (
-        <div className="flex flex-col h-screen bg-zinc-50">
-            {/* Header */}
-            <header className="flex items-center justify-between p-4 bg-white border-b shadow-sm">
-                <h1 className="font-bold text-xl text-zinc-800">HPTI AI</h1>
-                <div className="flex items-center gap-4">
-                    {messages.length > 0 && (
-                        <button
-                            onClick={handleClearHistory}
-                            className="text-sm text-zinc-500 hover:text-zinc-700"
-                        >
-                            Limpar
-                        </button>
-                    )}
-                    <UserButton afterSignOutUrl="/" />
+        <div className="flex flex-col h-[calc(100vh-4rem)] bg-zinc-50 dark:bg-zinc-950">
+            {/* Toolbar / Header Local */}
+            <div className="flex items-center justify-between px-6 py-3 border-b border-zinc-100 bg-white/50 backdrop-blur-md dark:bg-zinc-900/50 dark:border-zinc-800">
+                <div className="flex items-center gap-2">
+                    <Sparkles size={18} className="text-blue-600 dark:text-blue-400" />
+                    <span className="text-sm font-black tracking-widest uppercase text-zinc-900 dark:text-white">Sessão Ativa</span>
                 </div>
-            </header>
+
+                <div className="flex items-center gap-3">
+                    <button
+                        onClick={handleNewChat}
+                        className="flex items-center gap-2 px-3 py-1.5 text-xs font-bold text-zinc-600 hover:text-zinc-900 hover:bg-zinc-100 rounded-lg transition-all dark:text-zinc-400 dark:hover:text-white dark:hover:bg-zinc-800"
+                        title="Nova Conversa"
+                    >
+                        <PlusCircle size={16} />
+                        Nova
+                    </button>
+                    <div className="w-px h-4 bg-zinc-200 dark:bg-zinc-800" />
+                    <button
+                        onClick={handleClearHistory}
+                        className="flex items-center gap-2 px-3 py-1.5 text-xs font-bold text-red-500 hover:bg-red-50 rounded-lg transition-all dark:hover:bg-red-900/10"
+                        title="Apagar Histórico"
+                    >
+                        <Trash2 size={16} />
+                        Limpar
+                    </button>
+                </div>
+            </div>
 
             {/* Chat Messages */}
-            <div className="flex-1 overflow-y-auto p-4 space-y-4">
+            <div className="flex-1 overflow-y-auto p-6 space-y-6">
                 {isLoadingHistory ? (
-                    <div className="text-center text-zinc-400 mt-10">
-                        Carregando histórico...
+                    <div className="flex flex-col items-center justify-center h-full text-zinc-400 gap-4">
+                        <div className="w-6 h-6 border-2 border-zinc-200 border-t-blue-600 rounded-full animate-spin" />
+                        <span className="text-xs font-bold tracking-widest uppercase">Sincronizando...</span>
                     </div>
                 ) : messages.length === 0 ? (
-                    <div className="text-center text-zinc-400 mt-10">
-                        Como posso ajudar você hoje?
+                    <div className="flex flex-col items-center justify-center h-full text-center space-y-4">
+                        <div className="w-16 h-16 bg-zinc-100 rounded-2xl flex items-center justify-center dark:bg-zinc-900">
+                            <MessageSquare className="text-zinc-300" size={32} />
+                        </div>
+                        <div className="space-y-1">
+                            <h2 className="text-lg font-black text-zinc-900 dark:text-white tracking-tighter">Inicie uma conversa</h2>
+                            <p className="text-sm text-zinc-500 max-w-[240px]">Pergunte qualquer coisa para começar a explorar a IA.</p>
+                        </div>
                     </div>
                 ) : null}
 
                 {messages.map((m) => (
                     <div
                         key={m.id}
-                        className={`flex ${m.role === "user" ? "justify-end" : "justify-start"}`}
+                        className={`flex ${m.role === "user" ? "justify-end" : "justify-start animate-in fade-in slide-in-from-left-2 duration-300"}`}
                     >
                         <div
-                            className={`max-w-[80%] p-3 rounded-2xl ${m.role === "user"
-                                ? "bg-blue-600 text-white shadow-md"
-                                : "bg-white border border-zinc-200 text-zinc-800 shadow-sm"
+                            className={`max-w-[85%] p-4 rounded-3xl shadow-soft ${m.role === "user"
+                                ? "bg-zinc-900 text-white rounded-tr-none dark:bg-white dark:text-black"
+                                : "bg-white border border-zinc-100 rounded-tl-none text-zinc-800 dark:bg-zinc-900 dark:border-zinc-800 dark:text-zinc-200"
                                 }`}
                         >
-                            <span className="whitespace-pre-wrap">{m.content}</span>
+                            <span className="text-[15px] leading-relaxed whitespace-pre-wrap">{m.content}</span>
                         </div>
                     </div>
                 ))}
 
                 {isLoading && messages[messages.length - 1]?.role === "user" && (
                     <div className="flex justify-start">
-                        <div className="bg-zinc-200 animate-pulse p-3 rounded-2xl text-zinc-500 text-sm">
-                            IA pensando...
+                        <div className="bg-zinc-100 p-4 rounded-3xl rounded-tl-none flex items-center gap-3 dark:bg-zinc-900">
+                            <div className="flex gap-1">
+                                <div className="w-1.5 h-1.5 bg-blue-600 rounded-full animate-bounce [animation-delay:-0.3s]" />
+                                <div className="w-1.5 h-1.5 bg-blue-600 rounded-full animate-bounce [animation-delay:-0.15s]" />
+                                <div className="w-1.5 h-1.5 bg-blue-600 rounded-full animate-bounce" />
+                            </div>
                         </div>
                     </div>
                 )}
@@ -195,24 +229,48 @@ export default function ChatPage() {
             </div>
 
             {/* Input Area */}
-            <form onSubmit={handleSubmit} className="p-4 bg-white border-t">
-                <div className="max-w-4xl mx-auto flex gap-2">
+            <form onSubmit={handleSubmit} className="p-6 bg-transparent">
+                <div className="max-w-4xl mx-auto relative group">
                     <input
                         value={input}
                         onChange={(e) => setInput(e.target.value)}
-                        placeholder="Pergunte qualquer coisa..."
-                        className="flex-1 p-3 border rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 text-zinc-800"
+                        placeholder="Mensagem para HPTI AI..."
+                        className="w-full p-5 pr-16 bg-white border border-zinc-200 rounded-[2rem] shadow-soft focus:outline-none focus:ring-4 focus:ring-blue-500/5 focus:border-blue-500/50 transition-all dark:bg-zinc-900 dark:border-zinc-800 dark:text-white"
                         disabled={isLoading}
                     />
                     <button
                         type="submit"
                         disabled={isLoading || !input.trim()}
-                        className="bg-blue-600 text-white px-6 py-2 rounded-xl hover:bg-blue-700 transition disabled:opacity-50"
+                        className="absolute right-2 top-2 h-12 w-12 flex items-center justify-center bg-zinc-900 text-white rounded-full hover:bg-black transition-all disabled:opacity-30 dark:bg-white dark:text-black"
                     >
-                        Enviar
+                        <Send size={20} />
                     </button>
+                </div>
+                <div className="text-center mt-3">
+                    <p className="text-[10px] text-zinc-400 font-bold tracking-widest uppercase">
+                        AI pode cometer erros. Verifique informações importantes.
+                    </p>
                 </div>
             </form>
         </div>
     );
+}
+
+function MessageSquare({ size = 24, ...props }: React.SVGProps<SVGSVGElement> & { size?: number }) {
+    return (
+        <svg
+            {...props}
+            xmlns="http://www.w3.org/2000/svg"
+            width={size}
+            height={size}
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+        >
+            <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+        </svg>
+    )
 }

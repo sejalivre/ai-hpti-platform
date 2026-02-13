@@ -16,13 +16,29 @@ export async function GET() {
         }
 
         const chatId = `chat:${userId}`;
-        // Buscamos o histórico salvo no passo anterior
         const history = await redis.get(chatId);
 
-        // Se não houver histórico, retornamos uma lista vazia
         return NextResponse.json(history ?? []);
     } catch (error) {
         console.error("Erro ao buscar histórico:", error);
+        return new NextResponse("Internal Error", { status: 500 });
+    }
+}
+
+export async function DELETE() {
+    try {
+        const { userId } = await auth();
+
+        if (!userId) {
+            return new NextResponse("Unauthorized", { status: 401 });
+        }
+
+        const chatId = `chat:${userId}`;
+        await redis.del(chatId);
+
+        return new NextResponse("History deleted", { status: 200 });
+    } catch (error) {
+        console.error("Erro ao deletar histórico:", error);
         return new NextResponse("Internal Error", { status: 500 });
     }
 }
