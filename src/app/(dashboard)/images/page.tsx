@@ -1,3 +1,5 @@
+export const dynamic = "force-dynamic";
+
 export default function ImagesPage() {
     return (
         <div className="flex flex-col items-center justify-center min-h-[calc(100-4rem)] py-12 px-4 shadow-sm">

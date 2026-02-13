@@ -1,11 +1,11 @@
 "use client";
 
 import { useState, useEffect, useRef } from "react";
-import dynamic from "next/dynamic";
+import nextDynamic from "next/dynamic";
 import { Trash2, PlusCircle, Send, Sparkles } from "lucide-react";
 
 // Carrega o UserButton apenas no cliente para evitar hydration mismatch
-const UserButton = dynamic(
+const UserButton = nextDynamic(
     () => import("@clerk/nextjs").then((mod) => mod.UserButton),
     { ssr: false }
 );
@@ -15,6 +15,8 @@ interface Message {
     role: "user" | "assistant";
     content: string;
 }
+
+export const dynamic = "force-dynamic";
 
 export default function ChatPage() {
     const [messages, setMessages] = useState<Message[]>([]);
