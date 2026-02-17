@@ -1,19 +1,15 @@
 "use client";
 
 import { useState, useEffect, useRef } from "react";
-import nextDynamic from "next/dynamic";
-import { Trash2, PlusCircle, Send, Sparkles } from "lucide-react";
-
-// Carrega o UserButton apenas no cliente para evitar hydration mismatch
-const UserButton = nextDynamic(
-    () => import("@clerk/nextjs").then((mod) => mod.UserButton),
-    { ssr: false }
-);
+import { Trash2, PlusCircle, Send, Sparkles, ChevronDown, Zap } from "lucide-react";
+import { MODELS, type Model } from "@/lib/models";
+import { clsx } from "clsx";
 
 interface Message {
     id: string;
     role: "user" | "assistant";
     content: string;
+    modelId?: string;
 }
 
 export const dynamic = "force-dynamic";
@@ -23,9 +19,11 @@ export default function ChatPage() {
     const [input, setInput] = useState("");
     const [isLoading, setIsLoading] = useState(false);
     const [isLoadingHistory, setIsLoadingHistory] = useState(true);
+    const [selectedModel, setSelectedModel] = useState<Model>(MODELS[0]);
+    const [isModelMenuOpen, setIsModelMenuOpen] = useState(false);
     const messagesEndRef = useRef<HTMLDivElement>(null);
+    const modelMenuRef = useRef<HTMLDivElement>(null);
 
-    // Carrega histórico do Redis ao iniciar
     useEffect(() => {
         const loadHistory = async () => {
             try {
@@ -50,10 +48,19 @@ export default function ChatPage() {
         loadHistory();
     }, []);
 
-    // Auto-scroll para a última mensagem
     useEffect(() => {
         messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
     }, [messages]);
+
+    useEffect(() => {
+        const handleClickOutside = (event: MouseEvent) => {
+            if (modelMenuRef.current && !modelMenuRef.current.contains(event.target as Node)) {
+                setIsModelMenuOpen(false);
+            }
+        };
+        document.addEventListener('mousedown', handleClickOutside);
+        return () => document.removeEventListener('mousedown', handleClickOutside);
+    }, []);
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
@@ -63,6 +70,7 @@ export default function ChatPage() {
             id: Date.now().toString(),
             role: "user",
             content: input.trim(),
+            modelId: selectedModel.id,
         };
 
         setMessages((prev) => [...prev, userMessage]);
@@ -78,18 +86,27 @@ export default function ChatPage() {
                         role: m.role,
                         content: m.content,
                     })),
+                    modelId: selectedModel.id,
                 }),
             });
 
-            if (!response.ok) throw new Error("Erro na API");
-
             const reader = response.body?.getReader();
             const decoder = new TextDecoder();
+
+            if (!response.ok) {
+                let errorMsg = "Erro na API";
+                try {
+                    const errorData = await response.json();
+                    errorMsg = errorData.error || errorMsg;
+                } catch { }
+                throw new Error(errorMsg);
+            }
 
             const assistantMessage: Message = {
                 id: (Date.now() + 1).toString(),
                 role: "assistant",
                 content: "",
+                modelId: selectedModel.id,
             };
 
             setMessages((prev) => [...prev, assistantMessage]);
@@ -115,12 +132,14 @@ export default function ChatPage() {
             }
         } catch (error) {
             console.error("Erro:", error);
+            const errorMsg = error instanceof Error ? error.message : "Erro desconhecido";
             setMessages((prev) => [
                 ...prev,
                 {
                     id: (Date.now() + 1).toString(),
                     role: "assistant",
-                    content: "Desculpe, ocorreu um erro. Tente novamente.",
+                    content: `Erro: ${errorMsg}`,
+                    modelId: selectedModel.id,
                 },
             ]);
         } finally {
@@ -128,12 +147,10 @@ export default function ChatPage() {
         }
     };
 
-    // Nova Conversa (Limpa apenas o estado local)
     const handleNewChat = () => {
         setMessages([]);
     };
 
-    // Limpar Histórico (Deleta do Redis e do estado local)
     const handleClearHistory = async () => {
         if (!confirm("Tem certeza que deseja apagar todo o histórico permanentemente?")) return;
 
@@ -150,13 +167,101 @@ export default function ChatPage() {
         }
     };
 
+    const getProviderColor = (provider: string) => {
+        switch (provider) {
+            case 'groq': return 'text-orange-500 bg-orange-50 dark:bg-orange-950/30';
+            case 'deepseek': return 'text-purple-500 bg-purple-50 dark:bg-purple-950/30';
+            case 'modal': return 'text-pink-500 bg-pink-50 dark:bg-pink-950/30';
+            default: return 'text-zinc-500 bg-zinc-50';
+        }
+    };
+
+    const getProviderLabel = (provider: string) => {
+        switch (provider) {
+            case 'groq': return 'Groq';
+            case 'deepseek': return 'DeepSeek';
+            case 'modal': return 'Modal (GLM)';
+            default: return provider;
+        }
+    };
+
     return (
         <div className="flex flex-col h-[calc(100vh-4rem)] bg-zinc-50 dark:bg-zinc-950">
-            {/* Toolbar / Header Local */}
             <div className="flex items-center justify-between px-6 py-3 border-b border-zinc-100 bg-white/50 backdrop-blur-md dark:bg-zinc-900/50 dark:border-zinc-800">
-                <div className="flex items-center gap-2">
-                    <Sparkles size={18} className="text-blue-600 dark:text-blue-400" />
-                    <span className="text-sm font-black tracking-widest uppercase text-zinc-900 dark:text-white">Sessão Ativa</span>
+                <div className="flex items-center gap-4">
+                    <div className="flex items-center gap-2">
+                        <Sparkles size={18} className="text-blue-600 dark:text-blue-400" />
+                        <span className="text-sm font-black tracking-widest uppercase text-zinc-900 dark:text-white">Sessão Ativa</span>
+                    </div>
+
+                    <div className="relative" ref={modelMenuRef}>
+                        <button
+                            onClick={() => setIsModelMenuOpen(!isModelMenuOpen)}
+                            className="flex items-center gap-2 px-3 py-1.5 text-xs font-bold rounded-lg border border-zinc-200 hover:border-zinc-300 transition-all dark:border-zinc-700 dark:hover:border-zinc-600"
+                        >
+                            <span className="text-base">{selectedModel.icon}</span>
+                            <span className="text-zinc-700 dark:text-zinc-300">{selectedModel.name}</span>
+                            <ChevronDown size={14} className={clsx(
+                                "text-zinc-400 transition-transform",
+                                isModelMenuOpen && "rotate-180"
+                            )} />
+                        </button>
+
+                        {isModelMenuOpen && (
+                            <div className="absolute top-full left-0 mt-2 w-72 bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl shadow-xl z-50 overflow-hidden">
+                                <div className="p-2 border-b border-zinc-100 dark:border-zinc-800">
+                                    <p className="text-[10px] font-bold tracking-widest uppercase text-zinc-400 px-2">Selecione um Modelo</p>
+                                </div>
+                                <div className="max-h-80 overflow-y-auto">
+                                    {['groq', 'deepseek', 'modal'].map((provider) => (
+                                        <div key={provider}>
+                                            <div className="px-3 py-2 bg-zinc-50 dark:bg-zinc-800/50">
+                                                <span className={clsx(
+                                                    "text-[10px] font-bold tracking-widest uppercase",
+                                                    getProviderColor(provider)
+                                                )}>
+                                                    {getProviderLabel(provider)}
+                                                </span>
+                                            </div>
+                                            {MODELS.filter(m => m.provider === provider).map((model) => (
+                                                <button
+                                                    key={model.id}
+                                                    onClick={() => {
+                                                        setSelectedModel(model);
+                                                        setIsModelMenuOpen(false);
+                                                    }}
+                                                    className={clsx(
+                                                        "w-full flex items-center gap-3 px-3 py-3 text-left transition-all",
+                                                        selectedModel.id === model.id
+                                                            ? "bg-blue-50 dark:bg-blue-950/30"
+                                                            : "hover:bg-zinc-50 dark:hover:bg-zinc-800/50"
+                                                    )}
+                                                >
+                                                    <span className="text-lg">{model.icon}</span>
+                                                    <div className="flex-1 min-w-0">
+                                                        <p className={clsx(
+                                                            "text-sm font-bold truncate",
+                                                            selectedModel.id === model.id
+                                                                ? "text-blue-600 dark:text-blue-400"
+                                                                : "text-zinc-700 dark:text-zinc-300"
+                                                        )}>
+                                                            {model.name}
+                                                        </p>
+                                                        <p className="text-[11px] text-zinc-500 dark:text-zinc-400 truncate">
+                                                            {model.description}
+                                                        </p>
+                                                    </div>
+                                                    {selectedModel.id === model.id && (
+                                                        <Zap size={14} className="text-blue-500" />
+                                                    )}
+                                                </button>
+                                            ))}
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                        )}
+                    </div>
                 </div>
 
                 <div className="flex items-center gap-3">
@@ -180,8 +285,8 @@ export default function ChatPage() {
                 </div>
             </div>
 
-            {/* Chat Messages */}
-            <div className="flex-1 overflow-y-auto p-6 space-y-6">
+            <div className="flex-1 overflow-y-auto">
+                <div className="max-w-3xl mx-auto p-6 space-y-6">
                 {isLoadingHistory ? (
                     <div className="flex flex-col items-center justify-center h-full text-zinc-400 gap-4">
                         <div className="w-6 h-6 border-2 border-zinc-200 border-t-blue-600 rounded-full animate-spin" />
@@ -195,6 +300,23 @@ export default function ChatPage() {
                         <div className="space-y-1">
                             <h2 className="text-lg font-black text-zinc-900 dark:text-white tracking-tighter">Inicie uma conversa</h2>
                             <p className="text-sm text-zinc-500 max-w-[240px]">Pergunte qualquer coisa para começar a explorar a IA.</p>
+                        </div>
+                        <div className="flex flex-wrap justify-center gap-2 mt-4">
+                            {MODELS.slice(0, 4).map((model) => (
+                                <button
+                                    key={model.id}
+                                    onClick={() => setSelectedModel(model)}
+                                    className={clsx(
+                                        "flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-full border transition-all",
+                                        selectedModel.id === model.id
+                                            ? "bg-blue-50 border-blue-200 text-blue-600 dark:bg-blue-950/30 dark:border-blue-800 dark:text-blue-400"
+                                            : "bg-white border-zinc-200 text-zinc-600 hover:border-zinc-300 dark:bg-zinc-900 dark:border-zinc-700 dark:text-zinc-400"
+                                    )}
+                                >
+                                    <span>{model.icon}</span>
+                                    {model.name}
+                                </button>
+                            ))}
                         </div>
                     </div>
                 ) : null}
@@ -210,6 +332,16 @@ export default function ChatPage() {
                                 : "bg-white border border-zinc-100 rounded-tl-none text-zinc-800 dark:bg-zinc-900 dark:border-zinc-800 dark:text-zinc-200"
                                 }`}
                         >
+                            {m.role === "assistant" && m.modelId && (
+                                <div className="flex items-center gap-1.5 mb-2 pb-2 border-b border-zinc-100 dark:border-zinc-800">
+                                    <span className="text-xs">
+                                        {MODELS.find(mod => mod.id === m.modelId)?.icon || '🤖'}
+                                    </span>
+                                    <span className="text-[10px] font-bold tracking-widest uppercase text-zinc-400 dark:text-zinc-500">
+                                        {MODELS.find(mod => mod.id === m.modelId)?.name || 'AI'}
+                                    </span>
+                                </div>
+                            )}
                             <span className="text-[15px] leading-relaxed whitespace-pre-wrap">{m.content}</span>
                         </div>
                     </div>
@@ -228,16 +360,19 @@ export default function ChatPage() {
                 )}
 
                 <div ref={messagesEndRef} />
+                </div>
             </div>
 
-            {/* Input Area */}
-            <form onSubmit={handleSubmit} className="p-6 bg-transparent">
-                <div className="max-w-4xl mx-auto relative group">
+            <form onSubmit={handleSubmit} className="bg-transparent">
+                <div className="max-w-3xl mx-auto p-6 relative group">
+                    <div className="absolute left-4 top-1/2 -translate-y-1/2 flex items-center gap-1 text-xs text-zinc-400 dark:text-zinc-500">
+                        <span>{selectedModel.icon}</span>
+                    </div>
                     <input
                         value={input}
                         onChange={(e) => setInput(e.target.value)}
-                        placeholder="Mensagem para HPTI AI..."
-                        className="w-full p-5 pr-16 bg-white border border-zinc-200 rounded-[2rem] shadow-soft focus:outline-none focus:ring-4 focus:ring-blue-500/5 focus:border-blue-500/50 transition-all dark:bg-zinc-900 dark:border-zinc-800 dark:text-white"
+                        placeholder={`Mensagem para ${selectedModel.name}...`}
+                        className="w-full p-5 pl-12 pr-16 bg-white border border-zinc-200 rounded-[2rem] shadow-soft focus:outline-none focus:ring-4 focus:ring-blue-500/5 focus:border-blue-500/50 transition-all dark:bg-zinc-900 dark:border-zinc-800 dark:text-white"
                         disabled={isLoading}
                     />
                     <button
