@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef } from "react";
 import { Sparkles, ChevronDown, Send, RefreshCw, ArrowRight, Save, History, Volume2, VolumeX, Edit3, Check } from "lucide-react";
+import { useUser } from "@clerk/nextjs";
 import { MODELS, type Model } from "@/lib/models";
 import { clsx } from "clsx";
 
@@ -42,6 +43,19 @@ export default function BattlePage() {
     const [topic, setTopic] = useState("");
     const [isEditingTopic, setIsEditingTopic] = useState(false);
     const [playingAudio, setPlayingAudio] = useState<string | null>(null);
+    const { user } = useUser();
+
+    const fakeNames = [
+        "João Silva", "José Souza", "Maria Oliveira", "Ana Cardoso", 
+        "Carlos Pereira", "Paulo Rodrigues", "Fernanda Lima", "Juliana Alves",
+        "Ricardo Santos", "André Costa", "Beatriz Martins", "Lucas Ferreira",
+        "Gabriela Dias", "Marcos Rodrigues", "Camila Almeida", "Bruno Castro",
+        "Larissa Barbosa", "Felipe Rocha", "Patrícia Cunha", "Eduardo Melo"
+    ];
+    
+    const getRandomFakeName = () => fakeNames[Math.floor(Math.random() * fakeNames.length)];
+    
+    const [fakeName, setFakeName] = useState("");
     
     const messagesEndRef = useRef<HTMLDivElement>(null);
     const leftMenuRef = useRef<HTMLDivElement>(null);
@@ -148,6 +162,7 @@ export default function BattlePage() {
                 if (right) setRightModel(right);
                 setInitialMessage(battle.initialMessage);
                 setMessages(battle.messages);
+                setFakeName(getRandomFakeName());
                 setStarted(true);
                 setShowHistory(false);
             }
@@ -163,6 +178,7 @@ export default function BattlePage() {
         setMessages([]);
         setWaitingForNext(false);
         setNextTurn("right");
+        setFakeName(getRandomFakeName());
         
         const firstMessage: Message = {
             id: Date.now().toString(),
@@ -186,6 +202,7 @@ export default function BattlePage() {
         setWaitingForNext(false);
 
         const topicContext = topic ? `\n\nO tema atual da conversa é: ${topic}.` : '';
+        const userName = user?.firstName || user?.username || "usuário";
 
         try {
             const conversationHistory = messages.map(m => ({
@@ -193,7 +210,7 @@ export default function BattlePage() {
                 content: m.content,
             }));
 
-            const systemPrompt = `Você é ${model.name}. Você está em uma conversa com ${otherModel.name}. 
+            const systemPrompt = `Você é ${model.name} conversando com ${userName}.
 Seja natural, amigável e interessante. Responda de forma concisa (máximo 2-3 parágrafos).
 Sempre responda em português brasileiro.${topicContext}`;
 
@@ -533,7 +550,7 @@ Sempre responda em português brasileiro.${topicContext}`;
                                         <span className="text-zinc-400 font-bold">VS</span>
                                         <div className="flex items-center gap-2 px-4 py-2 bg-pink-100 dark:bg-pink-950/50 rounded-full">
                                             <span>{rightModel?.icon}</span>
-                                            <span className="text-sm font-bold text-pink-700 dark:text-pink-300">{rightModel?.name}</span>
+                                            <span className="text-sm font-bold text-pink-700 dark:text-pink-300">{fakeName || rightModel?.name}</span>
                                         </div>
                                     </div>
 
@@ -587,7 +604,7 @@ Sempre responda em português brasileiro.${topicContext}`;
                                             >
                                                 <div className="flex items-center justify-between mb-2">
                                                     <p className="text-sm font-bold text-zinc-600 dark:text-zinc-400">
-                                                        {m.role === "left" ? leftModel?.name : rightModel?.name}
+                                                        {m.role === "left" ? leftModel?.name : (fakeName || rightModel?.name)}
                                                     </p>
                                                     <button
                                                         onClick={() => speakText(m.content, m.id)}
@@ -643,7 +660,7 @@ Sempre responda em português brasileiro.${topicContext}`;
                                             )}
                                         >
                                             <ArrowRight size={18} />
-                                            {nextTurn === "left" ? `${leftModel?.name} responde` : `${rightModel?.name} responde`}
+                                            {nextTurn === "left" ? `${leftModel?.name} responde` : `${fakeName || rightModel?.name} responde`}
                                         </button>
                                     </div>
                                 )}
