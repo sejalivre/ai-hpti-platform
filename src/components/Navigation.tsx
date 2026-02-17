@@ -3,12 +3,13 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { UserButton } from "@clerk/nextjs";
-import { MessageSquare, Image as ImageIcon, FileText, Home, Brain } from "lucide-react";
+import { MessageSquare, Image as ImageIcon, FileText, Home, Brain, Swords } from "lucide-react";
 import { clsx } from "clsx";
 
 const navItems = [
     { name: "Início", href: "/", icon: Home },
     { name: "Chat", href: "/chat", icon: MessageSquare },
+    { name: "Batalha", href: "/battle", icon: Swords },
     { name: "Imagens", href: "/images", icon: ImageIcon },
     { name: "Arquivos", href: "/files", icon: FileText },
 ];
