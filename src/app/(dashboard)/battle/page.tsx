@@ -1,10 +1,9 @@
 "use client";
 
 import { useState, useEffect, useRef } from "react";
-import { Sparkles, ChevronDown, Send, RefreshCw, ArrowRight, Save, History, X, ExternalLink } from "lucide-react";
+import { Sparkles, ChevronDown, Send, RefreshCw, ArrowRight, Save, History, Volume2, VolumeX, Edit3, Check } from "lucide-react";
 import { MODELS, type Model } from "@/lib/models";
 import { clsx } from "clsx";
-import Link from "next/link";
 
 interface Message {
     id: string;
@@ -40,10 +39,14 @@ export default function BattlePage() {
     const [showHistory, setShowHistory] = useState(false);
     const [battles, setBattles] = useState<BattleSession[]>([]);
     const [saving, setSaving] = useState(false);
+    const [topic, setTopic] = useState("");
+    const [isEditingTopic, setIsEditingTopic] = useState(false);
+    const [playingAudio, setPlayingAudio] = useState<string | null>(null);
     
     const messagesEndRef = useRef<HTMLDivElement>(null);
     const leftMenuRef = useRef<HTMLDivElement>(null);
     const rightMenuRef = useRef<HTMLDivElement>(null);
+    const topicInputRef = useRef<HTMLInputElement>(null);
 
     useEffect(() => {
         loadBattles();
@@ -66,6 +69,12 @@ export default function BattlePage() {
         return () => document.removeEventListener('mousedown', handleClickOutside);
     }, []);
 
+    useEffect(() => {
+        if (isEditingTopic && topicInputRef.current) {
+            topicInputRef.current.focus();
+        }
+    }, [isEditingTopic]);
+
     const loadBattles = async () => {
         try {
             const response = await fetch('/api/battles');
@@ -76,6 +85,27 @@ export default function BattlePage() {
         } catch (error) {
             console.error('Erro ao carregar batalhas:', error);
         }
+    };
+
+    const speakText = (text: string, messageId: string) => {
+        if (playingAudio === messageId) {
+            window.speechSynthesis.cancel();
+            setPlayingAudio(null);
+            return;
+        }
+
+        window.speechSynthesis.cancel();
+        
+        const utterance = new SpeechSynthesisUtterance(text);
+        utterance.lang = 'pt-BR';
+        utterance.rate = 1.0;
+        utterance.pitch = 1.0;
+        
+        utterance.onstart = () => setPlayingAudio(messageId);
+        utterance.onend = () => setPlayingAudio(null);
+        utterance.onerror = () => setPlayingAudio(null);
+        
+        window.speechSynthesis.speak(utterance);
     };
 
     const saveBattle = async () => {
@@ -155,6 +185,8 @@ export default function BattlePage() {
         setIsLoading(true);
         setWaitingForNext(false);
 
+        const topicContext = topic ? `\n\nO tema atual da conversa é: ${topic}.` : '';
+
         try {
             const conversationHistory = messages.map(m => ({
                 role: m.role === respondingSide ? "assistant" : "user",
@@ -163,7 +195,7 @@ export default function BattlePage() {
 
             const systemPrompt = `Você é ${model.name}. Você está em uma conversa com ${otherModel.name}. 
 Seja natural, amigável e interessante. Responda de forma concisa (máximo 2-3 parágrafos).
-Sempre responda em português brasileiro.`;
+Sempre responda em português brasileiro.${topicContext}`;
 
             const response = await fetch("/api/chat", {
                 method: "POST",
@@ -236,6 +268,13 @@ Sempre responda em português brasileiro.`;
         setLastMessage("");
         setNextTurn("right");
         setSessionId(null);
+        setTopic("");
+        window.speechSynthesis.cancel();
+        setPlayingAudio(null);
+    };
+
+    const handleTopicSave = () => {
+        setIsEditingTopic(false);
     };
 
     const getProviderColor = (provider: string) => {
@@ -444,18 +483,33 @@ Sempre responda em português brasileiro.`;
                                 </div>
 
                                 {allSelected && (
-                                    <div className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-2xl p-6">
-                                        <label className="block text-sm font-black tracking-widest uppercase text-zinc-500 mb-3">
-                                            Mensagem Inicial
-                                        </label>
-                                        <textarea
-                                            value={initialMessage}
-                                            onChange={(e) => setInitialMessage(e.target.value)}
-                                            placeholder="Digite a mensagem inicial para começar a conversa..."
-                                            rows={3}
-                                            className="w-full px-4 py-3 text-sm bg-zinc-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-pink-500/20 resize-none"
-                                        />
-                                        <div className="mt-4 flex justify-end">
+                                    <div className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-2xl p-6 space-y-4">
+                                        <div>
+                                            <label className="block text-sm font-black tracking-widest uppercase text-zinc-500 mb-3">
+                                                Tema da Conversa (opcional)
+                                            </label>
+                                            <input
+                                                value={topic}
+                                                onChange={(e) => setTopic(e.target.value)}
+                                                placeholder="Ex: Tecnologia, filosofia, culinária, etc..."
+                                                className="w-full px-4 py-3 text-sm bg-zinc-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-pink-500/20"
+                                            />
+                                        </div>
+
+                                        <div>
+                                            <label className="block text-sm font-black tracking-widest uppercase text-zinc-500 mb-3">
+                                                Mensagem Inicial
+                                            </label>
+                                            <textarea
+                                                value={initialMessage}
+                                                onChange={(e) => setInitialMessage(e.target.value)}
+                                                placeholder="Digite a mensagem inicial para começar a conversa..."
+                                                rows={3}
+                                                className="w-full px-4 py-3 text-sm bg-zinc-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-pink-500/20 resize-none"
+                                            />
+                                        </div>
+
+                                        <div className="flex justify-end">
                                             <button
                                                 onClick={startConversation}
                                                 disabled={isLoading || !initialMessage.trim()}
@@ -470,15 +524,47 @@ Sempre responda em português brasileiro.`;
                             </div>
                         ) : (
                             <>
-                                <div className="flex justify-center gap-4 mb-6">
-                                    <div className="flex items-center gap-2 px-4 py-2 bg-blue-100 dark:bg-blue-950/50 rounded-full">
-                                        <span>{leftModel?.icon}</span>
-                                        <span className="text-sm font-bold text-blue-700 dark:text-blue-300">{leftModel?.name}</span>
+                                <div className="flex flex-col items-center gap-4 mb-6">
+                                    <div className="flex justify-center gap-4">
+                                        <div className="flex items-center gap-2 px-4 py-2 bg-blue-100 dark:bg-blue-950/50 rounded-full">
+                                            <span>{leftModel?.icon}</span>
+                                            <span className="text-sm font-bold text-blue-700 dark:text-blue-300">{leftModel?.name}</span>
+                                        </div>
+                                        <span className="text-zinc-400 font-bold">VS</span>
+                                        <div className="flex items-center gap-2 px-4 py-2 bg-pink-100 dark:bg-pink-950/50 rounded-full">
+                                            <span>{rightModel?.icon}</span>
+                                            <span className="text-sm font-bold text-pink-700 dark:text-pink-300">{rightModel?.name}</span>
+                                        </div>
                                     </div>
-                                    <span className="text-zinc-400 font-bold">VS</span>
-                                    <div className="flex items-center gap-2 px-4 py-2 bg-pink-100 dark:bg-pink-950/50 rounded-full">
-                                        <span>{rightModel?.icon}</span>
-                                        <span className="text-sm font-bold text-pink-700 dark:text-pink-300">{rightModel?.name}</span>
+
+                                    <div className="flex items-center gap-2 bg-zinc-100 dark:bg-zinc-800 px-4 py-2 rounded-full">
+                                        {isEditingTopic ? (
+                                            <div className="flex items-center gap-2">
+                                                <input
+                                                    ref={topicInputRef}
+                                                    value={topic}
+                                                    onChange={(e) => setTopic(e.target.value)}
+                                                    onKeyDown={(e) => e.key === 'Enter' && handleTopicSave()}
+                                                    placeholder="Novo tema..."
+                                                    className="bg-transparent border-b border-zinc-400 focus:outline-none text-sm w-48"
+                                                />
+                                                <button onClick={handleTopicSave} className="text-green-600">
+                                                    <Check size={16} />
+                                                </button>
+                                            </div>
+                                        ) : (
+                                            <>
+                                                <span className="text-xs text-zinc-500">
+                                                    Tema: <strong className="text-zinc-700 dark:text-zinc-300">{topic || "Geral"}</strong>
+                                                </span>
+                                                <button 
+                                                    onClick={() => setIsEditingTopic(true)} 
+                                                    className="text-zinc-400 hover:text-zinc-600"
+                                                >
+                                                    <Edit3 size={14} />
+                                                </button>
+                                            </>
+                                        )}
                                     </div>
                                 </div>
 
@@ -493,15 +579,28 @@ Sempre responda em português brasileiro.`;
                                         >
                                             <div
                                                 className={clsx(
-                                                    "max-w-[80%] p-4 rounded-2xl",
+                                                    "max-w-[80%] p-4 rounded-2xl group",
                                                     m.role === "left"
                                                         ? "bg-blue-100 dark:bg-blue-950/50 rounded-bl-none"
                                                         : "bg-pink-100 dark:bg-pink-950/50 rounded-br-none"
                                                 )}
                                             >
-                                                <p className="text-sm font-bold mb-1 text-zinc-600 dark:text-zinc-400">
-                                                    {m.role === "left" ? leftModel?.name : rightModel?.name}
-                                                </p>
+                                                <div className="flex items-center justify-between mb-2">
+                                                    <p className="text-sm font-bold text-zinc-600 dark:text-zinc-400">
+                                                        {m.role === "left" ? leftModel?.name : rightModel?.name}
+                                                    </p>
+                                                    <button
+                                                        onClick={() => speakText(m.content, m.id)}
+                                                        className={clsx(
+                                                            "p-1.5 rounded-lg transition-all",
+                                                            playingAudio === m.id
+                                                                ? "bg-red-500 text-white"
+                                                                : "bg-white/50 text-zinc-500 hover:bg-white hover:text-zinc-700 dark:bg-zinc-800 dark:text-zinc-400 dark:hover:bg-zinc-700"
+                                                        )}
+                                                    >
+                                                        {playingAudio === m.id ? <VolumeX size={14} /> : <Volume2 size={14} />}
+                                                    </button>
+                                                </div>
                                                 <p className="text-zinc-800 dark:text-zinc-200 whitespace-pre-wrap">
                                                     {m.content}
                                                 </p>
