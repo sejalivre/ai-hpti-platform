@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef } from "react";
 import { Sparkles, ChevronDown, Send, RefreshCw, ArrowRight, Save, History, Volume2, VolumeX, Edit3, Check } from "lucide-react";
+import { useUser } from "@clerk/nextjs";
 import { MODELS, type Model } from "@/lib/models";
 import { clsx } from "clsx";
 
@@ -42,6 +43,7 @@ export default function BattlePage() {
     const [topic, setTopic] = useState("");
     const [isEditingTopic, setIsEditingTopic] = useState(false);
     const [playingAudio, setPlayingAudio] = useState<string | null>(null);
+    const { user } = useUser();
     
     const messagesEndRef = useRef<HTMLDivElement>(null);
     const leftMenuRef = useRef<HTMLDivElement>(null);
@@ -186,6 +188,7 @@ export default function BattlePage() {
         setWaitingForNext(false);
 
         const topicContext = topic ? `\n\nO tema atual da conversa é: ${topic}.` : '';
+        const userName = user?.firstName || user?.username || "usuário";
 
         try {
             const conversationHistory = messages.map(m => ({
@@ -193,7 +196,7 @@ export default function BattlePage() {
                 content: m.content,
             }));
 
-            const systemPrompt = `Você é ${model.name}. Você está em uma conversa com ${otherModel.name}. 
+            const systemPrompt = `Você é ${model.name} conversando com ${userName}.
 Seja natural, amigável e interessante. Responda de forma concisa (máximo 2-3 parágrafos).
 Sempre responda em português brasileiro.${topicContext}`;
 
