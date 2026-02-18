@@ -11,6 +11,7 @@ export const dynamic = "force-dynamic";
 
 interface BattleSession {
     id: string;
+    title: string;
     leftModel: string;
     rightModel: string;
     initialMessage: string;
@@ -20,6 +21,7 @@ interface BattleSession {
         modelId: string;
     }>;
     createdAt: number;
+    updatedAt: number;
 }
 
 export async function POST(req: NextRequest) {
@@ -30,28 +32,33 @@ export async function POST(req: NextRequest) {
         }
 
         const body = await req.json();
-        const { leftModel, rightModel, initialMessage, messages } = body;
+        const { title, leftModel, rightModel, initialMessage, messages, sessionId: existingSessionId } = body;
 
         if (!leftModel || !rightModel || !messages) {
             return NextResponse.json({ error: 'Missing required fields' }, { status: 400 });
         }
 
-        const sessionId = `battle:${Date.now()}`;
+        const sessionId = existingSessionId || `battle:${Date.now()}`;
+        const now = Date.now();
         const session: BattleSession = {
             id: sessionId,
+            title: title || initialMessage || "Conversa",
             leftModel,
             rightModel,
             initialMessage: initialMessage || "Olá, quem é você?",
             messages,
-            createdAt: Date.now(),
+            createdAt: existingSessionId ? now : now,
+            updatedAt: now,
         };
 
         await redis.set(sessionId, JSON.stringify(session));
         await redis.expire(sessionId, 86400 * 30);
 
-        const userBattleListKey = `battles:${userId}`;
-        await redis.lpush(userBattleListKey, sessionId);
-        await redis.ltrim(userBattleListKey, 0, 49);
+        if (!existingSessionId) {
+            const userBattleListKey = `battles:${userId}`;
+            await redis.lpush(userBattleListKey, sessionId);
+            await redis.ltrim(userBattleListKey, 0, 49);
+        }
 
         return NextResponse.json({ sessionId, session });
     } catch (error) {

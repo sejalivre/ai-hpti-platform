@@ -1,28 +1,160 @@
 "use client";
 
 import { useState, useEffect, useRef } from "react";
-import { Trash2, PlusCircle, Send, Sparkles, ChevronDown, Zap } from "lucide-react";
-import { MODELS, type Model } from "@/lib/models";
+import { Trash2, PlusCircle, Send, Sparkles, ChevronDown, Zap, Bot, User, Mic, MicOff, Volume2, VolumeX } from "lucide-react";
+import { getAvailableModels, getDefaultModel, type Model } from "@/lib/models";
 import { clsx } from "clsx";
-
-interface Message {
-    id: string;
-    role: "user" | "assistant";
-    content: string;
-    modelId?: string;
-}
+import { useChat } from "@ai-sdk/react";
 
 export const dynamic = "force-dynamic";
 
+interface Agent {
+    id: string;
+    name: string;
+    description: string;
+    systemPrompt: string;
+    icon: string;
+}
+
+const DEFAULT_AGENT: Agent = {
+    id: 'default',
+    name: 'Assistente Padrão',
+    description: 'Assistente geral útil e amigável',
+    systemPrompt: '',
+    icon: '🤖'
+};
+
 export default function ChatPage() {
-    const [messages, setMessages] = useState<Message[]>([]);
-    const [input, setInput] = useState("");
-    const [isLoading, setIsLoading] = useState(false);
-    const [isLoadingHistory, setIsLoadingHistory] = useState(true);
-    const [selectedModel, setSelectedModel] = useState<Model>(MODELS[0]);
+    const [selectedModel, setSelectedModel] = useState<Model | null>(null);
+    const [availableModels, setAvailableModels] = useState<Model[]>([]);
     const [isModelMenuOpen, setIsModelMenuOpen] = useState(false);
+    
+    const [agents, setAgents] = useState<Agent[]>([DEFAULT_AGENT]);
+    const [selectedAgent, setSelectedAgent] = useState<Agent>(DEFAULT_AGENT);
+    const [isAgentMenuOpen, setIsAgentMenuOpen] = useState(false);
+
+    const [isLoadingHistory, setIsLoadingHistory] = useState(true);
     const messagesEndRef = useRef<HTMLDivElement>(null);
     const modelMenuRef = useRef<HTMLDivElement>(null);
+    const agentMenuRef = useRef<HTMLDivElement>(null);
+
+    // Voice State
+    const [isListening, setIsListening] = useState(false);
+    const [isSpeaking, setIsSpeaking] = useState(false);
+    const recognitionRef = useRef<any>(null);
+    const synthRef = useRef<SpeechSynthesis | null>(null);
+
+    const chatHelpers = useChat({}) as any;
+    const { messages, input, handleInputChange, handleSubmit, setMessages, isLoading, stop, setInput } = chatHelpers;
+
+    // Handle speech when messages finish
+    useEffect(() => {
+        if (messages.length > 0) {
+            const lastMessage = messages[messages.length - 1];
+            if (lastMessage.role === 'assistant' && isSpeaking) {
+                speak(lastMessage.content);
+            }
+        }
+    }, [messages, isSpeaking]);
+
+    // Load models on mount
+    useEffect(() => {
+        const loadModels = async () => {
+            const models = await getAvailableModels();
+            setAvailableModels(models);
+            if (models.length > 0 && !selectedModel) {
+                setSelectedModel(models[0]);
+            }
+        };
+        loadModels();
+    }, []);
+
+    // Initialize Speech Synthesis
+    useEffect(() => {
+        if (typeof window !== 'undefined') {
+            synthRef.current = window.speechSynthesis;
+        }
+    }, []);
+
+    // Speech Recognition Logic
+    const toggleListening = () => {
+        if (isListening) {
+            stopListening();
+        } else {
+            startListening();
+        }
+    };
+
+    const startListening = () => {
+        if (!('webkitSpeechRecognition' in window)) {
+            alert("Seu navegador não suporta reconhecimento de voz.");
+            return;
+        }
+        
+        const SpeechRecognition = (window as any).webkitSpeechRecognition;
+        recognitionRef.current = new SpeechRecognition();
+        recognitionRef.current.continuous = false;
+        recognitionRef.current.interimResults = false;
+        recognitionRef.current.lang = 'pt-BR';
+
+        recognitionRef.current.onstart = () => {
+            setIsListening(true);
+        };
+
+        recognitionRef.current.onresult = (event: any) => {
+            const transcript = event.results[0][0].transcript;
+            setInput(transcript);
+            // Auto submit after voice input? Optional. Let's keep manual send for now or auto submit.
+            // Let's just set input for now.
+        };
+
+        recognitionRef.current.onend = () => {
+            setIsListening(false);
+        };
+
+        recognitionRef.current.start();
+    };
+
+    const stopListening = () => {
+        if (recognitionRef.current) {
+            recognitionRef.current.stop();
+        }
+    };
+
+    // Text to Speech Logic
+    const toggleSpeaking = () => {
+        if (isSpeaking) {
+            if (synthRef.current) synthRef.current.cancel();
+            setIsSpeaking(false);
+        } else {
+            setIsSpeaking(true);
+        }
+    };
+
+    const speak = (text: string) => {
+        if (!synthRef.current) return;
+        
+        // Cancel previous speech
+        synthRef.current.cancel();
+
+        const utterance = new SpeechSynthesisUtterance(text);
+        utterance.lang = 'pt-BR';
+        utterance.rate = 1.0; // Normal speed
+        
+        // Try to find a good voice
+        const voices = synthRef.current.getVoices();
+        const ptVoice = voices.find(v => v.lang.includes('pt-BR'));
+        if (ptVoice) utterance.voice = ptVoice;
+
+        synthRef.current.speak(utterance);
+    };
+
+    // Stop speaking when component unmounts
+    useEffect(() => {
+        return () => {
+            if (synthRef.current) synthRef.current.cancel();
+        };
+    }, []);
 
     useEffect(() => {
         const loadHistory = async () => {
@@ -31,12 +163,11 @@ export default function ChatPage() {
                 if (response.ok) {
                     const history = await response.json();
                     if (Array.isArray(history) && history.length > 0) {
-                        const messagesWithIds = history.map((msg: { role: string; content: string }, index: number) => ({
+                        setMessages(history.map((msg: any, index: number) => ({
                             id: `history-${index}`,
-                            role: msg.role as "user" | "assistant",
+                            role: msg.role,
                             content: msg.content,
-                        }));
-                        setMessages(messagesWithIds);
+                        })));
                     }
                 }
             } catch (error) {
@@ -45,8 +176,24 @@ export default function ChatPage() {
                 setIsLoadingHistory(false);
             }
         };
+
+        const loadAgents = async () => {
+            try {
+                const res = await fetch('/api/agents');
+                if (res.ok) {
+                    const data = await res.json();
+                    if (Array.isArray(data)) {
+                        setAgents([DEFAULT_AGENT, ...data]);
+                    }
+                }
+            } catch (error) {
+                console.error("Erro ao carregar agentes:", error);
+            }
+        };
+
         loadHistory();
-    }, []);
+        loadAgents();
+    }, [setMessages]);
 
     useEffect(() => {
         messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -57,98 +204,31 @@ export default function ChatPage() {
             if (modelMenuRef.current && !modelMenuRef.current.contains(event.target as Node)) {
                 setIsModelMenuOpen(false);
             }
+            if (agentMenuRef.current && !agentMenuRef.current.contains(event.target as Node)) {
+                setIsAgentMenuOpen(false);
+            }
         };
         document.addEventListener('mousedown', handleClickOutside);
         return () => document.removeEventListener('mousedown', handleClickOutside);
     }, []);
 
-    const handleSubmit = async (e: React.FormEvent) => {
+    const handleCustomSubmit = (e: React.FormEvent) => {
         e.preventDefault();
-        if (!input.trim() || isLoading) return;
-
-        const userMessage: Message = {
-            id: Date.now().toString(),
-            role: "user",
-            content: input.trim(),
-            modelId: selectedModel.id,
-        };
-
-        setMessages((prev) => [...prev, userMessage]);
-        setInput("");
-        setIsLoading(true);
-
-        try {
-            const response = await fetch("/api/chat", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
-                    messages: [...messages, userMessage].map((m) => ({
-                        role: m.role,
-                        content: m.content,
-                    })),
-                    modelId: selectedModel.id,
-                }),
-            });
-
-            const reader = response.body?.getReader();
-            const decoder = new TextDecoder();
-
-            if (!response.ok) {
-                let errorMsg = "Erro na API";
-                try {
-                    const errorData = await response.json();
-                    errorMsg = errorData.error || errorMsg;
-                } catch { }
-                throw new Error(errorMsg);
-            }
-
-            const assistantMessage: Message = {
-                id: (Date.now() + 1).toString(),
-                role: "assistant",
-                content: "",
-                modelId: selectedModel.id,
-            };
-
-            setMessages((prev) => [...prev, assistantMessage]);
-
-            let fullContent = "";
-
-            if (reader) {
-                while (true) {
-                    const { done, value } = await reader.read();
-                    if (done) break;
-
-                    const chunk = decoder.decode(value, { stream: true });
-                    fullContent += chunk;
-
-                    setMessages((prev) => {
-                        const updated = prev.slice(0, -1);
-                        return [
-                            ...updated,
-                            { ...assistantMessage, content: fullContent },
-                        ];
-                    });
-                }
-            }
-        } catch (error) {
-            console.error("Erro:", error);
-            const errorMsg = error instanceof Error ? error.message : "Erro desconhecido";
-            setMessages((prev) => [
-                ...prev,
-                {
-                    id: (Date.now() + 1).toString(),
-                    role: "assistant",
-                    content: `Erro: ${errorMsg}`,
-                    modelId: selectedModel.id,
-                },
-            ]);
-        } finally {
-            setIsLoading(false);
-        }
+        if (!input?.trim() || !selectedModel) return;
+        
+        const formData = new FormData();
+        formData.append('message', input);
+        formData.append('modelId', selectedModel.id);
+        formData.append('systemPrompt', selectedAgent.systemPrompt);
+        
+        handleSubmit(e as any, {
+            body: formData,
+        } as any);
     };
 
     const handleNewChat = () => {
         setMessages([]);
+        stop();
     };
 
     const handleClearHistory = async () => {
@@ -168,21 +248,25 @@ export default function ChatPage() {
     };
 
     const getProviderColor = (provider: string) => {
-        switch (provider) {
-            case 'groq': return 'text-orange-500 bg-orange-50 dark:bg-orange-950/30';
-            case 'deepseek': return 'text-purple-500 bg-purple-50 dark:bg-purple-950/30';
-            case 'modal': return 'text-pink-500 bg-pink-50 dark:bg-pink-950/30';
-            default: return 'text-zinc-500 bg-zinc-50';
-        }
+        const colorMap: Record<string, string> = {
+            'groq': 'text-orange-500 bg-orange-50 dark:bg-orange-950/30',
+            'deepseek': 'text-purple-500 bg-purple-50 dark:bg-purple-950/30',
+            'modal': 'text-pink-500 bg-pink-50 dark:bg-pink-950/30',
+            'openai': 'text-green-500 bg-green-50 dark:bg-green-950/30',
+            'google': 'text-blue-500 bg-blue-50 dark:bg-blue-950/30'
+        };
+        return colorMap[provider] || 'text-zinc-500 bg-zinc-50 dark:bg-zinc-800/30';
     };
 
     const getProviderLabel = (provider: string) => {
-        switch (provider) {
-            case 'groq': return 'Groq';
-            case 'deepseek': return 'DeepSeek';
-            case 'modal': return 'Modal (GLM)';
-            default: return provider;
-        }
+        const labelMap: Record<string, string> = {
+            'groq': 'Groq',
+            'deepseek': 'DeepSeek',
+            'modal': 'Modal (GLM)',
+            'openai': 'OpenAI',
+            'google': 'Google AI'
+        };
+        return labelMap[provider] || provider.charAt(0).toUpperCase() + provider.slice(1);
     };
 
     return (
@@ -194,13 +278,15 @@ export default function ChatPage() {
                         <span className="text-sm font-black tracking-widest uppercase text-zinc-900 dark:text-white">Sessão Ativa</span>
                     </div>
 
+                    {/* Model Selector */}
                     <div className="relative" ref={modelMenuRef}>
                         <button
                             onClick={() => setIsModelMenuOpen(!isModelMenuOpen)}
                             className="flex items-center gap-2 px-3 py-1.5 text-xs font-bold rounded-lg border border-zinc-200 hover:border-zinc-300 transition-all dark:border-zinc-700 dark:hover:border-zinc-600"
+                            disabled={availableModels.length === 0}
                         >
-                            <span className="text-base">{selectedModel.icon}</span>
-                            <span className="text-zinc-700 dark:text-zinc-300">{selectedModel.name}</span>
+                            <span className="text-base">{selectedModel?.icon || '🤖'}</span>
+                            <span className="text-zinc-700 dark:text-zinc-300">{selectedModel?.name || 'Selecionar modelo'}</span>
                             <ChevronDown size={14} className={clsx(
                                 "text-zinc-400 transition-transform",
                                 isModelMenuOpen && "rotate-180"
@@ -213,50 +299,118 @@ export default function ChatPage() {
                                     <p className="text-[10px] font-bold tracking-widest uppercase text-zinc-400 px-2">Selecione um Modelo</p>
                                 </div>
                                 <div className="max-h-80 overflow-y-auto">
-                                    {['groq', 'deepseek', 'modal'].map((provider) => (
-                                        <div key={provider}>
-                                            <div className="px-3 py-2 bg-zinc-50 dark:bg-zinc-800/50">
-                                                <span className={clsx(
-                                                    "text-[10px] font-bold tracking-widest uppercase",
-                                                    getProviderColor(provider)
-                                                )}>
-                                                    {getProviderLabel(provider)}
-                                                </span>
-                                            </div>
-                                            {MODELS.filter(m => m.provider === provider).map((model) => (
-                                                <button
-                                                    key={model.id}
-                                                    onClick={() => {
-                                                        setSelectedModel(model);
-                                                        setIsModelMenuOpen(false);
-                                                    }}
-                                                    className={clsx(
-                                                        "w-full flex items-center gap-3 px-3 py-3 text-left transition-all",
-                                                        selectedModel.id === model.id
-                                                            ? "bg-blue-50 dark:bg-blue-950/30"
-                                                            : "hover:bg-zinc-50 dark:hover:bg-zinc-800/50"
-                                                    )}
-                                                >
-                                                    <span className="text-lg">{model.icon}</span>
-                                                    <div className="flex-1 min-w-0">
-                                                        <p className={clsx(
-                                                            "text-sm font-bold truncate",
-                                                            selectedModel.id === model.id
-                                                                ? "text-blue-600 dark:text-blue-400"
-                                                                : "text-zinc-700 dark:text-zinc-300"
-                                                        )}>
-                                                            {model.name}
-                                                        </p>
-                                                        <p className="text-[11px] text-zinc-500 dark:text-zinc-400 truncate">
-                                                            {model.description}
-                                                        </p>
-                                                    </div>
-                                                    {selectedModel.id === model.id && (
-                                                        <Zap size={14} className="text-blue-500" />
-                                                    )}
-                                                </button>
-                                            ))}
+                                    {availableModels.length === 0 ? (
+                                        <div className="p-4 text-center text-zinc-500 dark:text-zinc-400">
+                                            <div className="w-4 h-4 border-2 border-zinc-200 border-t-blue-600 rounded-full animate-spin mx-auto mb-2" />
+                                            <p className="text-xs">Carregando modelos...</p>
                                         </div>
+                                    ) : (
+                                        (() => {
+                                            const providers = Array.from(new Set(availableModels.map(m => m.provider)));
+                                            return providers.map((provider) => (
+                                            <div key={provider}>
+                                                <div className="px-3 py-2 bg-zinc-50 dark:bg-zinc-800/50">
+                                                    <span className={clsx(
+                                                        "text-[10px] font-bold tracking-widest uppercase",
+                                                        getProviderColor(provider)
+                                                    )}>
+                                                        {getProviderLabel(provider)}
+                                                    </span>
+                                                </div>
+                                                {availableModels.filter(m => m.provider === provider).map((model) => (
+                                                    <button
+                                                        key={model.id}
+                                                        onClick={() => {
+                                                            setSelectedModel(model);
+                                                            setIsModelMenuOpen(false);
+                                                        }}
+                                                        className={clsx(
+                                                            "w-full flex items-center gap-3 px-3 py-3 text-left transition-all",
+                                                            selectedModel?.id === model.id
+                                                                ? "bg-blue-50 dark:bg-blue-950/30"
+                                                                : "hover:bg-zinc-50 dark:hover:bg-zinc-800/50"
+                                                        )}
+                                                    >
+                                                        <span className="text-lg">{model.icon}</span>
+                                                        <div className="flex-1 min-w-0">
+                                                            <p className={clsx(
+                                                                "text-sm font-bold truncate",
+                                                                selectedModel?.id === model.id
+                                                                    ? "text-blue-600 dark:text-blue-400"
+                                                                    : "text-zinc-700 dark:text-zinc-300"
+                                                            )}>
+                                                                {model.name}
+                                                            </p>
+                                                            <p className="text-[11px] text-zinc-500 dark:text-zinc-400 truncate">
+                                                                {model.description}
+                                                            </p>
+                                                        </div>
+                                                        {selectedModel?.id === model.id && (
+                                                            <Zap size={14} className="text-blue-500" />
+                                                        )}
+                                                    </button>
+                                                ))}
+                                            </div>
+                                        ));
+                                        })()
+                                    )}
+                                </div>
+                            </div>
+                        )}
+                    </div>
+
+                    {/* Agent Selector */}
+                    <div className="relative" ref={agentMenuRef}>
+                        <button
+                            onClick={() => setIsAgentMenuOpen(!isAgentMenuOpen)}
+                            className="flex items-center gap-2 px-3 py-1.5 text-xs font-bold rounded-lg border border-zinc-200 hover:border-zinc-300 transition-all dark:border-zinc-700 dark:hover:border-zinc-600"
+                        >
+                            <span className="text-base">{selectedAgent.icon}</span>
+                            <span className="text-zinc-700 dark:text-zinc-300">{selectedAgent.name}</span>
+                            <ChevronDown size={14} className={clsx(
+                                "text-zinc-400 transition-transform",
+                                isAgentMenuOpen && "rotate-180"
+                            )} />
+                        </button>
+
+                        {isAgentMenuOpen && (
+                            <div className="absolute top-full left-0 mt-2 w-72 bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl shadow-xl z-50 overflow-hidden">
+                                <div className="p-2 border-b border-zinc-100 dark:border-zinc-800">
+                                    <p className="text-[10px] font-bold tracking-widest uppercase text-zinc-400 px-2">Selecione um Agente</p>
+                                </div>
+                                <div className="max-h-80 overflow-y-auto">
+                                    {agents.map((agent) => (
+                                        <button
+                                            key={agent.id}
+                                            onClick={() => {
+                                                setSelectedAgent(agent);
+                                                setIsAgentMenuOpen(false);
+                                            }}
+                                            className={clsx(
+                                                "w-full flex items-center gap-3 px-3 py-3 text-left transition-all",
+                                                selectedAgent.id === agent.id
+                                                    ? "bg-blue-50 dark:bg-blue-950/30"
+                                                    : "hover:bg-zinc-50 dark:hover:bg-zinc-800/50"
+                                            )}
+                                        >
+                                            <span className="text-lg">{agent.icon}</span>
+                                            <div className="flex-1 min-w-0">
+                                                <p className={clsx(
+                                                    "text-sm font-bold truncate",
+                                                    selectedAgent.id === agent.id
+                                                        ? "text-blue-600 dark:text-blue-400"
+                                                        : "text-zinc-700 dark:text-zinc-300"
+                                                )}>
+                                                    {agent.name}
+                                                </p>
+                                                <p className="text-[11px] text-zinc-500 dark:text-zinc-400 truncate">
+                                                    {agent.description}
+                                                </p>
+                                            </div>
+                                            {selectedAgent.id === agent.id && (
+                                                <User size={14} className="text-blue-500" />
+                                            )}
+                                        </button>
                                     ))}
                                 </div>
                             </div>
@@ -272,6 +426,20 @@ export default function ChatPage() {
                     >
                         <PlusCircle size={16} />
                         Nova
+                    </button>
+                    <div className="w-px h-4 bg-zinc-200 dark:bg-zinc-800" />
+                    <button
+                        onClick={toggleSpeaking}
+                        className={clsx(
+                            "flex items-center gap-2 px-3 py-1.5 text-xs font-bold rounded-lg transition-all",
+                            isSpeaking 
+                                ? "text-green-600 bg-green-50 hover:bg-green-100 dark:bg-green-900/20 dark:text-green-400" 
+                                : "text-zinc-600 hover:bg-zinc-100 dark:text-zinc-400 dark:hover:bg-zinc-800"
+                        )}
+                        title={isSpeaking ? "Desativar Voz (TTS)" : "Ativar Voz (TTS)"}
+                    >
+                        {isSpeaking ? <Volume2 size={16} /> : <VolumeX size={16} />}
+                        {isSpeaking ? "Voz ON" : "Voz OFF"}
                     </button>
                     <div className="w-px h-4 bg-zinc-200 dark:bg-zinc-800" />
                     <button
@@ -302,26 +470,26 @@ export default function ChatPage() {
                             <p className="text-sm text-zinc-500 max-w-[240px]">Pergunte qualquer coisa para começar a explorar a IA.</p>
                         </div>
                         <div className="flex flex-wrap justify-center gap-2 mt-4">
-                            {MODELS.slice(0, 4).map((model) => (
+                            {availableModels.slice(0, 4).map((model) => (
                                 <button
                                     key={model.id}
                                     onClick={() => setSelectedModel(model)}
                                     className={clsx(
                                         "flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-full border transition-all",
-                                        selectedModel.id === model.id
+                                        selectedModel?.id === model.id
                                             ? "bg-blue-50 border-blue-200 text-blue-600 dark:bg-blue-950/30 dark:border-blue-800 dark:text-blue-400"
-                                            : "bg-white border-zinc-200 text-zinc-600 hover:border-zinc-300 dark:bg-zinc-900 dark:border-zinc-700 dark:text-zinc-400"
+                                            : "bg-zinc-50 border-zinc-200 text-zinc-600 hover:bg-zinc-100 dark:bg-zinc-800/30 dark:border-zinc-700 dark:text-zinc-400"
                                     )}
                                 >
                                     <span>{model.icon}</span>
-                                    {model.name}
+                                    <span>{model.name}</span>
                                 </button>
                             ))}
                         </div>
                     </div>
                 ) : null}
 
-                {messages.map((m) => (
+                {messages.map((m: any) => (
                     <div
                         key={m.id}
                         className={`flex ${m.role === "user" ? "justify-end" : "justify-start animate-in fade-in slide-in-from-left-2 duration-300"}`}
@@ -332,13 +500,13 @@ export default function ChatPage() {
                                 : "bg-white border border-zinc-100 rounded-tl-none text-zinc-800 dark:bg-zinc-900 dark:border-zinc-800 dark:text-zinc-200"
                                 }`}
                         >
-                            {m.role === "assistant" && m.modelId && (
+                            {m.role === "assistant" && (
                                 <div className="flex items-center gap-1.5 mb-2 pb-2 border-b border-zinc-100 dark:border-zinc-800">
                                     <span className="text-xs">
-                                        {MODELS.find(mod => mod.id === m.modelId)?.icon || '🤖'}
+                                        {selectedAgent.icon}
                                     </span>
                                     <span className="text-[10px] font-bold tracking-widest uppercase text-zinc-400 dark:text-zinc-500">
-                                        {MODELS.find(mod => mod.id === m.modelId)?.name || 'AI'}
+                                        {selectedAgent.name}
                                     </span>
                                 </div>
                             )}
@@ -363,25 +531,40 @@ export default function ChatPage() {
                 </div>
             </div>
 
-            <form onSubmit={handleSubmit} className="bg-transparent">
+            <form onSubmit={handleCustomSubmit} className="bg-transparent">
                 <div className="max-w-3xl mx-auto p-6 relative group">
                     <div className="absolute left-4 top-1/2 -translate-y-1/2 flex items-center gap-1 text-xs text-zinc-400 dark:text-zinc-500">
-                        <span>{selectedModel.icon}</span>
+                        <span>{selectedModel?.icon || '🤖'}</span>
                     </div>
                     <input
                         value={input}
-                        onChange={(e) => setInput(e.target.value)}
-                        placeholder={`Mensagem para ${selectedModel.name}...`}
-                        className="w-full p-5 pl-12 pr-16 bg-white border border-zinc-200 rounded-[2rem] shadow-soft focus:outline-none focus:ring-4 focus:ring-blue-500/5 focus:border-blue-500/50 transition-all dark:bg-zinc-900 dark:border-zinc-800 dark:text-white"
-                        disabled={isLoading}
+                        onChange={handleInputChange}
+                        placeholder={`Mensagem para ${selectedModel?.name || 'modelo'} como ${selectedAgent.name}...`}
+                        className="w-full p-5 pl-12 pr-32 bg-white border border-zinc-200 rounded-[2rem] shadow-soft focus:outline-none focus:ring-4 focus:ring-blue-500/5 focus:border-blue-500/50 transition-all dark:bg-zinc-900 dark:border-zinc-800 dark:text-white"
+                        disabled={isLoading || !selectedModel}
                     />
-                    <button
-                        type="submit"
-                        disabled={isLoading || !input.trim()}
-                        className="absolute right-2 top-2 h-12 w-12 flex items-center justify-center bg-zinc-900 text-white rounded-full hover:bg-black transition-all disabled:opacity-30 dark:bg-white dark:text-black"
-                    >
-                        <Send size={20} />
-                    </button>
+                    <div className="absolute right-2 top-2 flex items-center gap-1">
+                        <button
+                            type="button"
+                            onClick={toggleListening}
+                            className={clsx(
+                                "h-12 w-12 flex items-center justify-center rounded-full transition-all",
+                                isListening 
+                                    ? "bg-red-500 text-white animate-pulse" 
+                                    : "text-zinc-400 hover:text-zinc-600 hover:bg-zinc-100 dark:text-zinc-500 dark:hover:bg-zinc-800"
+                            )}
+                            title={isListening ? "Parar de ouvir" : "Falar (Microfone)"}
+                        >
+                            {isListening ? <MicOff size={20} /> : <Mic size={20} />}
+                        </button>
+                        <button
+                            type="submit"
+                            disabled={isLoading || !input?.trim() || !selectedModel}
+                            className="h-12 w-12 flex items-center justify-center bg-zinc-900 text-white rounded-full hover:bg-black transition-all disabled:opacity-30 dark:bg-white dark:text-black"
+                        >
+                            <Send size={20} />
+                        </button>
+                    </div>
                 </div>
                 <div className="text-center mt-3">
                     <p className="text-[10px] text-zinc-400 font-bold tracking-widest uppercase">

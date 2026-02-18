@@ -1,8 +1,8 @@
 "use client";
 
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
 import { Upload, FileText, Sparkles, ChevronDown, Loader2, Copy, Check, X, File, FileText as FileTextIcon } from "lucide-react";
-import { MODELS, type Model } from "@/lib/models";
+import { getAvailableModels, getDefaultModel, type Model } from "@/lib/models";
 import { clsx } from "clsx";
 
 interface DocumentData {
@@ -20,11 +20,24 @@ export default function FilesPage() {
     const [result, setResult] = useState<string | null>(null);
     const [usedModel, setUsedModel] = useState<Model | null>(null);
     const [isLoading, setIsLoading] = useState(false);
+    const [selectedModel, setSelectedModel] = useState<Model | null>(null);
+    const [availableModels, setAvailableModels] = useState<Model[]>([]);
     const [isModelMenuOpen, setIsModelMenuOpen] = useState(false);
-    const [selectedModel, setSelectedModel] = useState<Model>(MODELS[0]);
     const [copied, setCopied] = useState(false);
     const fileInputRef = useRef<HTMLInputElement>(null);
     const modelMenuRef = useRef<HTMLDivElement>(null);
+
+    // Load models on mount
+    useEffect(() => {
+        const loadModels = async () => {
+            const models = await getAvailableModels();
+            setAvailableModels(models);
+            if (models.length > 0 && !selectedModel) {
+                setSelectedModel(models[0]);
+            }
+        };
+        loadModels();
+    }, []);
 
     const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
         const file = e.target.files?.[0];
@@ -86,6 +99,43 @@ export default function FilesPage() {
         setResult(null);
 
         try {
+            // Try the new upload API for better PDF support
+            try {
+                const formData = new FormData();
+                
+                // Create a File object from the content
+                const file = new Blob([document.content], { 
+                    type: document.fileType || 'text/plain' 
+                });
+                // Create a File with name using Blob approach
+                const fileWithName = Object.assign(file, {
+                    name: document.fileName
+                }) as File;
+                
+                formData.append('file', fileWithName);
+                if (prompt) {
+                    formData.append('prompt', prompt);
+                }
+                if (selectedModel?.id) {
+                    formData.append('modelId', selectedModel.id);
+                }
+
+                const uploadResponse = await fetch('/api/documents/upload', {
+                    method: 'POST',
+                    body: formData,
+                });
+
+                if (uploadResponse.ok) {
+                    const uploadData = await uploadResponse.json();
+                    setResult(uploadData.result);
+                    setUsedModel(uploadData.model);
+                    return;
+                }
+            } catch (uploadError) {
+                console.log('Upload API failed, using fallback:', uploadError);
+            }
+
+            // Fallback to the original JSON API
             const truncatedContent = document.content.length > 10000 
                 ? document.content.substring(0, 10000) + '\n\n[Documento truncado devido ao tamanho]'
                 : document.content;
@@ -100,7 +150,7 @@ export default function FilesPage() {
                         fileType: document.fileType,
                     },
                     prompt: prompt || undefined,
-                    modelId: selectedModel.id,
+                    modelId: selectedModel?.id || '',
                 }),
             });
 
@@ -176,9 +226,10 @@ export default function FilesPage() {
                         <button
                             onClick={() => setIsModelMenuOpen(!isModelMenuOpen)}
                             className="flex items-center gap-2 px-3 py-1.5 text-xs font-bold rounded-lg border border-zinc-200 hover:border-zinc-300 transition-all dark:border-zinc-700 dark:hover:border-zinc-600"
+                            disabled={availableModels.length === 0}
                         >
-                            <span className="text-base">{selectedModel.icon}</span>
-                            <span className="text-zinc-700 dark:text-zinc-300">{selectedModel.name}</span>
+                            <span className="text-base">{selectedModel?.icon || '📄'}</span>
+                            <span className="text-zinc-700 dark:text-zinc-300">{selectedModel?.name || 'Selecionar modelo'}</span>
                             <ChevronDown size={14} className={clsx(
                                 "text-zinc-400 transition-transform",
                                 isModelMenuOpen && "rotate-180"
@@ -198,7 +249,7 @@ export default function FilesPage() {
                                                     {getProviderLabel(provider)}
                                                 </span>
                                             </div>
-                                            {MODELS.filter(m => m.provider === provider).map((model) => (
+                                            {availableModels.filter(m => m.provider === provider).map((model) => (
                                                 <button
                                                     key={model.id}
                                                     onClick={() => {
@@ -207,7 +258,7 @@ export default function FilesPage() {
                                                     }}
                                                     className={clsx(
                                                         "w-full flex items-center gap-3 px-3 py-3 text-left transition-all",
-                                                        selectedModel.id === model.id
+                                                        selectedModel?.id === model.id
                                                             ? "bg-emerald-50 dark:bg-emerald-950/30"
                                                             : "hover:bg-zinc-50 dark:hover:bg-zinc-800/50"
                                                     )}
@@ -216,7 +267,7 @@ export default function FilesPage() {
                                                     <div className="flex-1 min-w-0">
                                                         <p className={clsx(
                                                             "text-sm font-bold truncate",
-                                                            selectedModel.id === model.id
+                                                            selectedModel?.id === model.id
                                                                 ? "text-emerald-600 dark:text-emerald-400"
                                                                 : "text-zinc-700 dark:text-zinc-300"
                                                         )}>
