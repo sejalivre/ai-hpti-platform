@@ -1,9 +1,9 @@
 "use client";
 
 import { useState, useEffect, useRef } from "react";
-import { Sparkles, ChevronDown, Send, RefreshCw, ArrowRight, Save, History, Volume2, VolumeX, Edit3, Check } from "lucide-react";
+import { Sparkles, ChevronDown, Send, RefreshCw, ArrowRight, Save, History, Volume2, VolumeX, Edit3, Check, Info, SaveIcon } from "lucide-react";
 import { useUser } from "@clerk/nextjs";
-import { MODELS, type Model } from "@/lib/models";
+import { getAvailableModels, getDefaultModel, type Model } from "@/lib/models";
 import { clsx } from "clsx";
 
 interface Message {
@@ -15,6 +15,7 @@ interface Message {
 
 interface BattleSession {
     id: string;
+    title: string;
     leftModel: string;
     rightModel: string;
     initialMessage: string;
@@ -41,8 +42,15 @@ export default function BattlePage() {
     const [battles, setBattles] = useState<BattleSession[]>([]);
     const [saving, setSaving] = useState(false);
     const [topic, setTopic] = useState("");
+    const [previousTopic, setPreviousTopic] = useState("");
     const [isEditingTopic, setIsEditingTopic] = useState(false);
     const [playingAudio, setPlayingAudio] = useState<string | null>(null);
+    const [showTopicHelp, setShowTopicHelp] = useState(false);
+    const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
+    const [autoSaveEnabled, setAutoSaveEnabled] = useState(true);
+    const [conversationTitle, setConversationTitle] = useState("");
+    const [modelNames, setModelNames] = useState<Record<string, string>>({});
+    const [availableModels, setAvailableModels] = useState<Model[]>([]);
     const { user } = useUser();
 
     const fakeNames = [
@@ -64,6 +72,27 @@ export default function BattlePage() {
 
     useEffect(() => {
         loadBattles();
+        // Initialize models
+        const loadModels = async () => {
+            const models = await getAvailableModels();
+            setAvailableModels(models);
+            
+            if (models.length >= 2) {
+                setLeftModel(models[0]);
+                setRightModel(models[1]);
+            } else if (models.length === 1) {
+                setLeftModel(models[0]);
+                setRightModel(models[0]);
+            }
+            
+            // Cache model names
+            const names: Record<string, string> = {};
+            models.forEach(model => {
+                names[model.id] = model.name;
+            });
+            setModelNames(names);
+        };
+        loadModels();
     }, []);
 
     useEffect(() => {
@@ -122,25 +151,41 @@ export default function BattlePage() {
         window.speechSynthesis.speak(utterance);
     };
 
-    const saveBattle = async () => {
+    const generateConversationTitle = (messages: Message[]) => {
+        if (messages.length === 0) return "Conversa iniciada";
+        
+        const firstMessage = messages[0]?.content || "";
+        if (firstMessage.length > 50) {
+            return firstMessage.substring(0, 50) + "...";
+        }
+        return firstMessage || "Conversa";
+    };
+
+    const saveBattle = async (autoSave = false) => {
         if (!leftModel || !rightModel || messages.length === 0) return;
         
         setSaving(true);
         try {
+            const title = conversationTitle || generateConversationTitle(messages);
             const response = await fetch('/api/battles', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
+                    title,
                     leftModel: leftModel.id,
                     rightModel: rightModel.id,
                     initialMessage,
                     messages,
+                    sessionId: currentSessionId,
                 }),
             });
 
             if (response.ok) {
                 const data = await response.json();
-                setSessionId(data.sessionId);
+                setCurrentSessionId(data.sessionId);
+                if (autoSave) {
+                    setConversationTitle(title);
+                }
                 loadBattles();
             }
         } catch (error) {
@@ -150,13 +195,20 @@ export default function BattlePage() {
         }
     };
 
+    const autoSaveBattle = async () => {
+        if (autoSaveEnabled && leftModel && rightModel && messages.length > 0 && !isLoading) {
+            await saveBattle(true);
+        }
+    };
+
     const loadBattle = async (battleId: string) => {
         try {
             const response = await fetch(`/api/battles/${battleId}`);
             if (response.ok) {
                 const battle = await response.json();
-                const left = MODELS.find(m => m.id === battle.leftModel);
-                const right = MODELS.find(m => m.id === battle.rightModel);
+                const models = await getAvailableModels();
+                 const left = models.find(m => m.id === battle.leftModel);
+                 const right = models.find(m => m.id === battle.rightModel);
                 
                 if (left) setLeftModel(left);
                 if (right) setRightModel(right);
@@ -165,6 +217,8 @@ export default function BattlePage() {
                 setFakeName(getRandomFakeName());
                 setStarted(true);
                 setShowHistory(false);
+                setCurrentSessionId(battle.id);
+                setConversationTitle(battle.title || "");
             }
         } catch (error) {
             console.error('Erro ao carregar batalha:', error);
@@ -256,6 +310,8 @@ Sempre responda em português brasileiro.${topicContext}`;
             setIsLoading(false);
             setWaitingForNext(true);
             setNextTurn(respondingSide === "left" ? "right" : "left");
+            
+            setTimeout(() => autoSaveBattle(), 500);
 
         } catch (error) {
             console.error("Erro:", error);
@@ -284,13 +340,17 @@ Sempre responda em português brasileiro.${topicContext}`;
         setIsLoading(false);
         setLastMessage("");
         setNextTurn("right");
-        setSessionId(null);
+        setCurrentSessionId(null);
         setTopic("");
+        setConversationTitle("");
         window.speechSynthesis.cancel();
         setPlayingAudio(null);
     };
 
     const handleTopicSave = () => {
+        if (topic !== previousTopic && started && messages.length > 0) {
+            setPreviousTopic(topic);
+        }
         setIsEditingTopic(false);
     };
 
@@ -312,8 +372,9 @@ Sempre responda em português brasileiro.${topicContext}`;
         }
     };
 
-    const getModelName = (modelId: string) => {
-        return MODELS.find(m => m.id === modelId)?.name || modelId;
+    const getModelName = async (modelId: string) => {
+        const models = await getAvailableModels();
+        return models.find(m => m.id === modelId)?.name || modelId;
     };
 
     const formatDate = (timestamp: number) => {
@@ -324,6 +385,26 @@ Sempre responda em português brasileiro.${topicContext}`;
             hour: '2-digit',
             minute: '2-digit',
         });
+    };
+
+    const handleModelChange = (newModel: Model, side: "left" | "right") => {
+        if (started && messages.length > 0) {
+            const currentModel = side === "left" ? leftModel : rightModel;
+            if (currentModel?.id !== newModel.id) {
+                if (confirm(`Trocar o modelo ${side} irá criar uma nova conversa. Deseja continuar?`)) {
+                    handleReset();
+                    setCurrentSessionId(null);
+                    setConversationTitle("");
+                } else {
+                    return;
+                }
+            }
+        }
+        if (side === "left") {
+            setLeftModel(newModel);
+        } else {
+            setRightModel(newModel);
+        }
     };
 
     const renderModelSelector = (
@@ -369,11 +450,11 @@ Sempre responda em português brasileiro.${topicContext}`;
                                         {getProviderLabel(provider)}
                                     </span>
                                 </div>
-                                {MODELS.filter(m => m.provider === provider).map((m) => (
+                                {availableModels.filter(m => m.provider === provider).map((m) => (
                                     <button
                                         key={m.id}
                                         onClick={() => {
-                                            setModel(m);
+                                            handleModelChange(m, side);
                                             setIsMenuOpen(false);
                                         }}
                                         className={clsx(
@@ -427,10 +508,11 @@ Sempre responda em português brasileiro.${topicContext}`;
                                     className="w-full text-left p-3 rounded-lg hover:bg-zinc-100 dark:hover:bg-zinc-800 mb-2"
                                 >
                                     <div className="flex items-center gap-2 mb-1">
-                                        <span className="text-xs font-bold text-blue-600">{getModelName(battle.leftModel)}</span>
+                                        <span className="text-xs font-bold text-blue-600">{modelNames[battle.leftModel] || battle.leftModel}</span>
                                         <span className="text-xs text-zinc-400">vs</span>
-                                        <span className="text-xs font-bold text-pink-600">{getModelName(battle.rightModel)}</span>
+                                        <span className="text-xs font-bold text-pink-600">{modelNames[battle.rightModel] || battle.rightModel}</span>
                                     </div>
+                                    <p className="text-sm font-medium text-zinc-700 dark:text-zinc-300 truncate">{battle.title}</p>
                                     <p className="text-xs text-zinc-400 truncate">{battle.initialMessage}</p>
                                     <p className="text-[10px] text-zinc-500 mt-1">{formatDate(battle.createdAt)}</p>
                                 </button>
@@ -462,14 +544,34 @@ Sempre responda em português brasileiro.${topicContext}`;
                         </button>
                         
                         {started && messages.length > 0 && (
-                            <button
-                                onClick={saveBattle}
-                                disabled={saving || !!sessionId}
-                                className="flex items-center gap-2 px-3 py-1.5 text-xs font-bold text-green-600 hover:bg-green-50 rounded-lg transition-all dark:hover:bg-green-900/10 disabled:opacity-50"
-                            >
-                                <Save size={16} />
-                                {saving ? 'Salvando...' : sessionId ? 'Salvo!' : 'Salvar'}
-                            </button>
+                            <div className="flex items-center gap-2">
+                                <button
+                                    onClick={() => saveBattle(false)}
+                                    disabled={saving}
+                                    className="flex items-center gap-2 px-3 py-1.5 text-xs font-bold text-green-600 hover:bg-green-50 rounded-lg transition-all dark:hover:bg-green-900/10 disabled:opacity-50"
+                                >
+                                    <Save size={16} />
+                                    {saving ? 'Salvando...' : 'Salvar manual'}
+                                </button>
+                                
+                                <div className="flex items-center gap-2 bg-zinc-100 dark:bg-zinc-800 px-3 py-1.5 rounded-lg">
+                                    <span className="text-xs text-zinc-600 dark:text-zinc-400">Auto-save</span>
+                                    <button
+                                        onClick={() => setAutoSaveEnabled(!autoSaveEnabled)}
+                                        className={clsx(
+                                            "relative inline-flex h-5 w-9 items-center rounded-full transition-all",
+                                            autoSaveEnabled ? "bg-green-500" : "bg-zinc-400"
+                                        )}
+                                    >
+                                        <span
+                                            className={clsx(
+                                                "inline-block h-4 w-4 transform rounded-full bg-white transition-transform",
+                                                autoSaveEnabled ? "translate-x-4" : "translate-x-0.5"
+                                            )}
+                                        />
+                                    </button>
+                                </div>
+                            </div>
                         )}
 
                         {started && (
@@ -541,11 +643,11 @@ Sempre responda em português brasileiro.${topicContext}`;
                             </div>
                         ) : (
                             <>
-                                <div className="flex flex-col items-center gap-4 mb-6">
+<div className="flex flex-col items-center gap-4 mb-6">
                                     <div className="flex justify-center gap-4">
                                         <div className="flex items-center gap-2 px-4 py-2 bg-blue-100 dark:bg-blue-950/50 rounded-full">
                                             <span>{leftModel?.icon}</span>
-                                            <span className="text-sm font-bold text-blue-700 dark:text-blue-300">{leftModel?.name}</span>
+                                            <span className="text-sm font-bold text-blue-700 dark:text-blue-300">{user?.firstName || user?.username || "Você"}</span>
                                         </div>
                                         <span className="text-zinc-400 font-bold">VS</span>
                                         <div className="flex items-center gap-2 px-4 py-2 bg-pink-100 dark:bg-pink-950/50 rounded-full">
@@ -554,33 +656,75 @@ Sempre responda em português brasileiro.${topicContext}`;
                                         </div>
                                     </div>
 
-                                    <div className="flex items-center gap-2 bg-zinc-100 dark:bg-zinc-800 px-4 py-2 rounded-full">
-                                        {isEditingTopic ? (
-                                            <div className="flex items-center gap-2">
-                                                <input
-                                                    ref={topicInputRef}
-                                                    value={topic}
-                                                    onChange={(e) => setTopic(e.target.value)}
-                                                    onKeyDown={(e) => e.key === 'Enter' && handleTopicSave()}
-                                                    placeholder="Novo tema..."
-                                                    className="bg-transparent border-b border-zinc-400 focus:outline-none text-sm w-48"
-                                                />
-                                                <button onClick={handleTopicSave} className="text-green-600">
-                                                    <Check size={16} />
-                                                </button>
+                                    <div className="flex flex-col items-center gap-2">
+                                        <div className="flex items-center gap-2 bg-zinc-100 dark:bg-zinc-800 px-4 py-2 rounded-full">
+                                            {isEditingTopic ? (
+                                                <div className="flex items-center gap-2">
+                                                    <input
+                                                        ref={topicInputRef}
+                                                        value={topic}
+                                                        onChange={(e) => setTopic(e.target.value)}
+                                                        onKeyDown={(e) => e.key === 'Enter' && handleTopicSave()}
+                                                        placeholder="Novo tema..."
+                                                        className="bg-transparent border-b border-zinc-400 focus:outline-none text-sm w-48"
+                                                    />
+                                                    <button onClick={handleTopicSave} className="text-green-600">
+                                                        <Check size={16} />
+                                                    </button>
+                                                    <button 
+                                                        onClick={() => {
+                                                            setIsEditingTopic(false);
+                                                            setTopic("");
+                                                        }} 
+                                                        className="text-red-500"
+                                                    >
+                                                        Limpar
+                                                    </button>
+                                                </div>
+                                            ) : (
+                                                <>
+                                                    <span className="text-xs text-zinc-500">
+                                                        Tema: <strong className="text-zinc-700 dark:text-zinc-300">{topic || "Geral"}</strong>
+                                                    </span>
+                                                    <button 
+                                                        onClick={() => setIsEditingTopic(true)} 
+                                                        className="text-zinc-400 hover:text-zinc-600"
+                                                        title="Alterar tema"
+                                                    >
+                                                        <Edit3 size={14} />
+                                                    </button>
+                                                    {topic && (
+                                                        <div className="text-xs bg-green-100 text-green-800 dark:bg-green-900/50 dark:text-green-300 px-2 py-1 rounded-full">
+                                                            Ativo
+                                                        </div>
+                                                    )}
+                                                    <button
+                                                        onClick={() => setShowTopicHelp(!showTopicHelp)}
+                                                        className="text-zinc-400 hover:text-zinc-600"
+                                                        title="Como funciona?"
+                                                    >
+                                                        <Info size={14} />
+                                                    </button>
+                                                </>
+                                            )}
+                                        </div>
+                                        
+                                        {showTopicHelp && (
+                                            <div className="max-w-md bg-blue-50 dark:bg-blue-950/50 text-blue-800 dark:text-blue-300 text-xs p-3 rounded-lg">
+                                                <p><strong>Como mudar o tópico:</strong></p>
+                                                <ul className="mt-1 space-y-1">
+                                                    <li>• Clique no ícone <Edit3 size={12} className="inline" /> para editar o tema</li>
+                                                    <li>• Digite um novo tópico e clique em <Check size={12} className="inline" /></li>
+                                                    <li>• As próximas mensagens seguirão o novo tema</li>
+                                                    <li>• Use "Limpar" para remover o tema atual</li>
+                                                </ul>
                                             </div>
-                                        ) : (
-                                            <>
-                                                <span className="text-xs text-zinc-500">
-                                                    Tema: <strong className="text-zinc-700 dark:text-zinc-300">{topic || "Geral"}</strong>
-                                                </span>
-                                                <button 
-                                                    onClick={() => setIsEditingTopic(true)} 
-                                                    className="text-zinc-400 hover:text-zinc-600"
-                                                >
-                                                    <Edit3 size={14} />
-                                                </button>
-                                            </>
+                                        )}
+                                        
+                                        {currentSessionId && (
+                                            <div className="text-xs bg-zinc-200 dark:bg-zinc-700 text-zinc-600 dark:text-zinc-300 px-2 py-1 rounded-full">
+                                                Sessão salva
+                                            </div>
                                         )}
                                     </div>
                                 </div>
@@ -604,7 +748,7 @@ Sempre responda em português brasileiro.${topicContext}`;
                                             >
                                                 <div className="flex items-center justify-between mb-2">
                                                     <p className="text-sm font-bold text-zinc-600 dark:text-zinc-400">
-                                                        {m.role === "left" ? leftModel?.name : (fakeName || rightModel?.name)}
+                                                        {m.role === "left" ? (user?.firstName || user?.username || "Você") : (fakeName || rightModel?.name)}
                                                     </p>
                                                     <button
                                                         onClick={() => speakText(m.content, m.id)}
@@ -660,7 +804,7 @@ Sempre responda em português brasileiro.${topicContext}`;
                                             )}
                                         >
                                             <ArrowRight size={18} />
-                                            {nextTurn === "left" ? `${leftModel?.name} responde` : `${fakeName || rightModel?.name} responde`}
+                                            {nextTurn === "left" ? `${user?.firstName || user?.username || "Você"} responde` : `${fakeName || rightModel?.name} responde`}
                                         </button>
                                     </div>
                                 )}
